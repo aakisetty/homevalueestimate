@@ -48,8 +48,12 @@ def get_house_price_AttomData(address1, address2):
         response.raise_for_status()
         data = response.json()
         # print(data)
-        sale_amount = data["property"][0]["sale"]["saleAmountData"]["saleAmt"]
-        # print(sale_amount)
+        # Try to get the sale amount, if available
+        sale_amount = data["property"][0]["sale"]["saleAmountData"].get("saleAmt")
+        
+        # If sale amount is not available, use the total assessed value
+        if sale_amount is None:
+            sale_amount = data["property"][0]["assessment"]["assessed"]["assdTtlValue"]
         return clean_price(sale_amount)
     except requests.exceptions.RequestException as e:
         print(f"Error making API request: {e}")
@@ -80,7 +84,7 @@ async def estimate_home_value(request: EstimateRequest):
         raise HTTPException(status_code=404, detail="Unable to estimate home value due to lack of data.")
 
     percentage_match = (request.user_estimate / attom_estimate) * 100
-    pm = str(percentage_match)
+    pm = str(f"{percentage_match:.2f}%")
     return EstimateResponse(
         address=f"{request.address1}, {request.address2}",
         user_estimate=request.user_estimate,
