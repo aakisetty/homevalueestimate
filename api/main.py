@@ -32,7 +32,7 @@ def clean_price(price_str):
 
 def get_house_price_AttomData(address1, address2):
     url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/basicprofile"
-    api_key = "2b1e86b638620bf2404521e6e9e1b19e"
+    api_key = "6300621eea66a16daa96f042358517bd"
     
     headers = {
         "Accept": "application/json",

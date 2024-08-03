@@ -1,7 +1,5 @@
 import requests
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import requests
 import re
 
@@ -51,7 +49,7 @@ def get_house_price_AttomData(api_key, address1, address2):
 
 
 # Example usage
-api_key = "2b1e86b638620bf2404521e6e9e1b19e"
+api_key = "6300621eea66a16daa96f042358517bd"
 
 # address1 = "4529 Winona Court"
 # address2 = "Denver, CO"
