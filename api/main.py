@@ -97,7 +97,7 @@ async def root():
     """
     Root endpoint that returns a welcome message.
     """
-    return {"message": "Welcome to the Home Value Estimator API"}
+    return {"message": "Welcome to the Home Value Estimator API 2024"}
 
 if __name__ == "__main__":
     import uvicorn
