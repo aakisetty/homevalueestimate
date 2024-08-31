@@ -2,10 +2,19 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import pandas as pd
+import json
 from datetime import datetime
 import requests
 import re
+import os
+from dotenv import load_dotenv
+import logging
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
 app = FastAPI(
     title="Home Value Estimator",
     description="An API for estimating home values based on user input and multiple data sources.",
@@ -14,8 +23,8 @@ app = FastAPI(
 
 class EstimateRequest(BaseModel):
     user_estimate: float
-    address1: str
-    address2: str
+    address: str
+   
 
 class EstimateResponse(BaseModel):
     address: str
@@ -23,73 +32,98 @@ class EstimateResponse(BaseModel):
     estimate: float
     percentage_match: str
 
-def clean_price(price_str):
-    cleaned = re.sub(r'[^\d.]', '', str(price_str))
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
+import time
+from typing import Optional
+import requests
+import json
+import os
+import logging
 
-def get_house_price_AttomData(address1, address2):
-    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/basicprofile"
-    api_key = "6300621eea66a16daa96f042358517bd"
-    
+def get_house_price_datafiniti(address: str, max_retries: int = 3, retry_delay: int = 5) -> Optional[float]:
+    api_token = os.getenv("DATAFINITI_API_TOKEN")
+
     headers = {
-        "Accept": "application/json",
-        "apikey": api_key
+        'Authorization': f'Bearer {api_token}',
+        'Content-Type': 'application/json',
     }
-    params = {
-        "address1": address1,
-        "address2": address2
+    url = 'https://api.datafiniti.co/v4/properties/search'
+    data = {
+        'query': f'address:{address}',
+        'format': 'JSON',
+        'num_records': 1,
+        'download': False
     }
-    
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-        # print(data)
-        # Try to get the sale amount, if available
-        sale_amount = data["property"][0]["sale"]["saleAmountData"].get("saleAmt")
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=data, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'records' in data and len(data['records'][0].get('prices', [])) >= 2:
+                prices = data['records'][0].get('prices', [])
+                logger.info(f"Retrieved {len(prices)} prices for address: {address}")
+                
+                if len(prices) > 2:
+                    total_price = 0
+                    count = 0
+                    for price in prices:
+                        if 'amountMax' in price:
+                            total_price += price['amountMax']
+                            count += 1
+                        elif 'amountMin' in price:
+                            total_price += price['amountMin']
+                            count += 1
+                    
+                    if count > 0:
+                        average_price = total_price / count
+                        logger.info(f"Calculated average price: {average_price}")
+                        return average_price
+                else:
+                    logger.warning(f"Not enough prices found. Retrying... (Attempt {attempt + 1}/{max_retries})")
+            else:
+                logger.warning(f"No records found. Retrying... (Attempt {attempt + 1}/{max_retries})")
+            
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
         
-        # If sale amount is not available, use the total assessed value
-        if sale_amount is None:
-            sale_amount = data["property"][0]["assessment"]["assessed"]["assdTtlValue"]
-        return clean_price(sale_amount)
-    except requests.exceptions.RequestException as e:
-        print(f"Error making API request: {e}")
-        return None
-    except (KeyError, IndexError) as e:
-        print(f"Error parsing API response: {e}")
-        return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error making API request: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing API response: {e}")
+        except KeyError as e:
+            logger.error(f"Unexpected response structure: {e}")
+        
+        if attempt < max_retries - 1:
+            logger.info(f"Retrying in {retry_delay} seconds... (Attempt {attempt + 2}/{max_retries})")
+            time.sleep(retry_delay)
 
-
+    logger.error(f"Failed to retrieve valid data after {max_retries} attempts")
+    return None
 
 @app.post("/estimate", response_model=EstimateResponse, tags=["Estimates"])
 async def estimate_home_value(request: EstimateRequest):
-    """
-    Estimate home value based on user input and compare it with data from AttomData.
-    - **user_estimate**: User's estimated value of the property
-    - **address1**: First line of the property address
-    - **address2**: Second line of the property address (city, state)
+    estimate = get_house_price_datafiniti(request.address)
 
-    Returns:
-    - **address**: The full address of the property
-    - **user_estimate**: The user's input estimate
-    - **estimate**: The estimate from combined data sets.
-    - **percentage_match**: How close the user's estimate is to the AttomData estimate (as a percentage)
-    """
-    attom_estimate = get_house_price_AttomData(request.address1, request.address2)
-
-    if attom_estimate is None:
+    if estimate is None:
+        logger.error(f"Unable to estimate home value for address: {request.address}")
         raise HTTPException(status_code=404, detail="Unable to estimate home value due to lack of data.")
 
-    percentage_match = (request.user_estimate / attom_estimate) * 100
-    pm = str(f"{percentage_match:.2f}%")
+    # Calculate the percentage match
+    if request.user_estimate > estimate:
+        percentage_match = (estimate / request.user_estimate) * 100
+    else:
+        percentage_match = (request.user_estimate / estimate) * 100
+
+    pm = f"{percentage_match:.2f}%"
+
+    logger.info(f"Estimate calculated for {request.address}: User estimate: {request.user_estimate}, API estimate: {estimate}, Match: {pm}")
+
     return EstimateResponse(
-        address=f"{request.address1}, {request.address2}",
+        address=request.address,
         user_estimate=request.user_estimate,
-        estimate=attom_estimate,
-        percentage_match = pm
+        estimate=estimate,
+        percentage_match=pm
     )
 
 @app.get("/", tags=["Root"])
